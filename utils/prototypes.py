@@ -22,17 +22,18 @@ class PrototypeMemory(nn.Module):
     更新方式: weighted EMA，由 PRM 的 hypergraph gate 筛选后的
     representative samples 进行加权更新，抑制 outliers。
     """
-    def __init__(self, d: int, Kt: int = 1, Ks: int = 1, ema_m: float = 0.05, 
+    def __init__(self, d: int, Kt: int = 1, Ks: int = 1, ema_m: float = 0.01, 
                  learnable: bool = False, device: str = "cuda", sim: str = "cos"):
         """
         Args:
             d: prototype 维度
-            Kt: tumor prototype slots 数量（论文要求=1，即 one per class）
-            Ks: struct prototype slots 数量（论文要求=1）
-            ema_m: EMA momentum (new_value 的权重)
-            learnable: 是否将 prototype 作为可学习参数
-            device: 设备
-            sim: 相似度计算方式 ("cos" for cosine)
+            Kt: tumor prototype slots (paper: 1, one per class)
+            Ks: struct prototype slots (paper: 1)
+            ema_m: EMA momentum for new value (paper: η=0.99 keep rate → ema_m=1-η=0.01)
+                   Update: P = (1-ema_m)*P_old + ema_m*P_new
+            learnable: whether prototypes are learnable parameters
+            device: device
+            sim: similarity metric ("cos" for cosine)
         """
         super().__init__()
         # 强制 Kt=Ks=1 以符合论文 "one prototype per class" 的设计

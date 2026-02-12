@@ -62,12 +62,12 @@ class StageConfig:
 
     # training schedule
     max_epoch: int = 200
-    batch_size: int = 16
+    batch_size: int = 128
     images_rate: float = 1.0
 
     # optimizer & LR
-    base_lr: float = 2e-3
-    weight_decay: float = 1e-4
+    base_lr: float = 1e-4
+    weight_decay: float = 4e-4
     optim_name: str = "adam"
     lr_scheduler: str = "warmupMultistep"  # warmupMultistep | warmupCosine | autoReduce
     step_num_lr: int = 4
@@ -78,9 +78,9 @@ class StageConfig:
     nce_weight: float = 3.5
 
     # Tversky / focal parameters
-    alpha: float = 0.3      # Tversky α (FP 权重，静态配置)
-    beta: float = 0.7       # Tversky β (FN 权重，静态配置)
-    gamma: float = 1.2      # Focal Tversky gamma
+    alpha: float = 0.7      # Tversky α (FP weight, paper: 0.7)
+    beta: float = 1.5       # Tversky β (FN weight, paper: 1.5)
+    gamma: float = 1.2      # Focal Tversky gamma (paper: 1.2)
 
     # legacy ablation fields (kept)
     ab_freeze_epochs: int = 15
@@ -118,7 +118,7 @@ class StageConfig:
     init_imb_w: float = 8.0             # Focal Tversky 损失权重
     
     # pTAC 对比学习
-    tau: float = 0.15                   # 对比学习温度 (静态配置)
+    tau: float = 0.10                   # pTAC temperature (paper: τ=0.1)
     proto_warmup_epochs: int = 10
 
 

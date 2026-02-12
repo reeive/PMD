@@ -1,4 +1,17 @@
 # -*- coding: utf-8 -*-
+"""
+PMD: Prototype-guided Meta DIL for Missing-Modality Brain Tumor Segmentation
+Training script - launches stage-by-stage incremental training.
+
+Paper: "From Semantic Drift to Objective Miscalibration: Domain Incremental
+        Brain Tumor Segmentation with Missing Modality" (MedIA 2026)
+
+Default hyperparameters match Section 4.2 of the paper:
+  - Adam, lr=1e-4, weight_decay=4e-4, batch_size=128, 200 epochs/stage
+  - Tversky (α, β, γ) = (0.7, 1.5, 1.2), pTAC τ=0.1
+  - PRM: top-q=0.5, power iteration T=10, EMA η=0.99
+  - Meta Controller: η_inner=1e-4, η_meta=1e-3, update every K=10 steps
+"""
 import os
 import re
 import sys
@@ -16,39 +29,45 @@ logging.basicConfig(
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="ReHyDIL++ (Proto + Meta + TAC) trainer")
+    p = argparse.ArgumentParser(description="PMD: Prototype-guided Meta DIL trainer")
 
     # ---- Paths & stage lists ----
     p.add_argument("--data_path", type=str, required=True)
     p.add_argument("--out_root", type=str, default="results")
-    p.add_argument("--stages", type=str, default="t1,t2,flair,t1ce")
+    p.add_argument("--stages", type=str, default="t1,t2,flair,t1ce",
+                   help="Comma-separated modality order. "
+                        "Clinical: t1,t2,flair,t1ce; Feature: flair,t1ce,t1,t2")
     p.add_argument("--train_lists", type=str, default="")
     p.add_argument("--val_lists", type=str, default="")
     p.add_argument("--train_fmt", type=str, default="lists/train.list")
     p.add_argument("--val_fmt", type=str, default="lists/val.list")
 
-    # ---- Training basics ----
-    p.add_argument("--max_epoch", type=int, default=80)
-    p.add_argument("--batch_size", type=int, default=16)
+    # ---- Training basics (paper Sec 4.2) ----
+    p.add_argument("--max_epoch", type=int, default=200,
+                   help="Epochs per stage (paper: 200)")
+    p.add_argument("--batch_size", type=int, default=128,
+                   help="Batch size (paper: 128)")
     p.add_argument("--images_rate", type=float, default=1.0)
 
-    # ---- Optim & LR ----
-    p.add_argument("--base_lr", type=float, default=1e-3)
-    p.add_argument("--weight_decay", type=float, default=3e-4)
+    # ---- Optimizer & LR (paper Sec 4.2: Adam, lr=1e-4, wd=4e-4) ----
+    p.add_argument("--base_lr", type=float, default=1e-4)
+    p.add_argument("--weight_decay", type=float, default=4e-4)
     p.add_argument("--optim_name", type=str, default="adam", choices=["adam", "adamw", "sgd"])
     p.add_argument("--lr_scheduler", type=str, default="warmupMultistep",
                    choices=["warmupMultistep", "warmupCosine", "autoReduce"])
     p.add_argument("--step_num_lr", type=int, default=4)
 
-    # ---- Loss weights (static init for MetaHyper) ----
-    p.add_argument("--tversky_w", type=float, default=7.0)
-    p.add_argument("--imb_w", type=float, default=8.0)
-    p.add_argument("--nce_weight", type=float, default=3.5)  # prototype contrast weight init
+    # ---- Tversky / Focal parameters (paper Sec 4.2: α=0.7, β=1.5, γ=1.2) ----
+    p.add_argument("--alpha", type=float, default=0.7,
+                   help="Tversky α (FP weight, paper: 0.7)")
+    p.add_argument("--beta", type=float, default=1.5,
+                   help="Tversky β (FN weight, paper: 1.5)")
+    p.add_argument("--gamma", type=float, default=1.2,
+                   help="Focal Tversky γ (paper: 1.2)")
 
-    # ---- Tversky/FT params ----
-    p.add_argument("--alpha", type=float, default=0.3)
-    p.add_argument("--beta", type=float, default=0.7)
-    p.add_argument("--gamma", type=float, default=1.2)
+    # ---- pTAC temperature (paper Sec 4.2: τ=0.1) ----
+    p.add_argument("--tau", type=float, default=0.1,
+                   help="pTAC contrastive temperature (paper: 0.1)")
 
     # ---- System & seed ----
     p.add_argument("--in_channels", type=int, default=4)
@@ -58,23 +77,23 @@ def parse_args():
     p.add_argument("--seed", type=int, default=1111)
     p.add_argument("--ddp", action="store_true")
 
-    # ---- Meta-hyper (learned weights) ----
-    p.add_argument("--use_meta", action="store_true")
-    p.add_argument("--meta_lr", type=float, default=1e-3)
-    p.add_argument("--init_tau", type=float, default=0.07)
-    p.add_argument("--init_lambda_proto", type=float, default=3.5)
+    # ---- Meta Controller (paper Sec 3.4 & 4.2: η_inner=1e-4, η_meta=1e-3) ----
+    p.add_argument("--use_meta", action="store_true",
+                   help="Enable Meta Controller for adaptive loss reweighting")
+    p.add_argument("--meta_lr", type=float, default=1e-3,
+                   help="Meta Controller learning rate (paper: η_meta=1e-3)")
+    p.add_argument("--meta_update_freq", type=int, default=10,
+                   help="Meta update period K (every K steps)")
+    p.add_argument("--meta_inner_lr", type=float, default=1e-4,
+                   help="Virtual inner step lr (paper: η_inner=1e-4)")
+
+    # ---- Loss weight init (for MetaHyper w_total computation) ----
     p.add_argument("--init_tversky_w", type=float, default=7.0)
     p.add_argument("--init_imb_w", type=float, default=8.0)
+    p.add_argument("--init_lambda_proto", type=float, default=3.5)
 
-    p.add_argument("--alpha_low", type=float, default=0.05)
-    p.add_argument("--alpha_high", type=float, default=0.40)
-    p.add_argument("--beta_low", type=float, default=0.60)
-    p.add_argument("--beta_high", type=float, default=1.00)
-    p.add_argument("--ab_freeze_epochs", type=int, default=10)
-    p.add_argument("--ab_kl", type=float, default=1e-3)
+    # ---- Prototype scheduling ----
     p.add_argument("--proto_warmup_epochs", type=int, default=10)
-
-    # ---- Proto scheduling & alignment ----
     p.add_argument("--proto_floor_start", type=float, default=0.10)
     p.add_argument("--proto_floor_end", type=float, default=0.40)
     p.add_argument("--proto_floor_epochs", type=int, default=60)
@@ -84,14 +103,16 @@ def parse_args():
     p.add_argument("--proto_gain_span", type=int, default=40)
     p.add_argument("--proto_gain_max", type=float, default=2.0)
 
-    # ---- EMA teacher for TAC ----
+    # ---- EMA teacher ----
     p.add_argument("--new_teacher_is_ema", type=int, default=1, choices=[0, 1])
     p.add_argument("--new_teacher_ema_m", type=float, default=0.99)
 
-    # ---- Replay/Queue & PER ----
+    # ---- Replay buffer (paper Sec 3.2: retain 10% per stage) ----
     p.add_argument("--mem_size", type=int, default=32000)
-    p.add_argument("--p_keep", type=float, default=0.10)
+    p.add_argument("--p_keep", type=float, default=0.10,
+                   help="Fraction of samples kept per stage for replay (paper: 10%%)")
 
+    # ---- PER (Prioritized Experience Replay) ----
     p.add_argument("--per_enable", type=int, default=1, choices=[0, 1])
     p.add_argument("--per_alpha", type=float, default=0.6)
     p.add_argument("--per_beta", type=float, default=0.4)
@@ -99,20 +120,23 @@ def parse_args():
     p.add_argument("--per_use_ema", type=int, default=1, choices=[0, 1])
     p.add_argument("--per_ema_m", type=float, default=0.7)
 
-    p.add_argument("--force_first_stage", type=int, default=-1, choices=[-1, 0, 1],
-                   help="是否强制视为Stage-1：-1=自动(默认), 1=强制Stage-1 warmup, 0=非Stage-1")
-    p.add_argument("--allow_prev_in_4ch", type=int, default=1, choices=[0, 1],
-                   help="4通道输入是否允许拼入前序模态：1=允许(默认), 0=不允许")
+    # ---- Stage control ----
+    p.add_argument("--force_first_stage", type=int, default=-1, choices=[-1, 0, 1])
+    p.add_argument("--allow_prev_in_4ch", type=int, default=1, choices=[0, 1])
 
-    # ---- Replay Training (经验回放训练) ----
-    p.add_argument("--use_replay", type=int, default=1, choices=[0, 1],
-                   help="是否启用replay训练：1=启用(默认), 0=禁用")
-    p.add_argument("--replay_ratio", type=float, default=0.3,
-                   help="每个batch中replay数据的比例 (默认0.3)")
-    p.add_argument("--replay_contrast_weight", type=float, default=1.0,
-                   help="replay对比学习损失的权重 (默认1.0)")
-    p.add_argument("--replay_stratified", type=int, default=1, choices=[0, 1],
-                   help="是否按模态分层抽样：1=是(默认), 0=否")
+    # ---- Replay training (paper Sec 3.2: 1:1 current/replay ratio) ----
+    p.add_argument("--use_replay", type=int, default=1, choices=[0, 1])
+    p.add_argument("--replay_ratio", type=float, default=0.5,
+                   help="Replay batch ratio (paper: 1:1 → 0.5)")
+    p.add_argument("--replay_contrast_weight", type=float, default=1.0)
+    p.add_argument("--replay_stratified", type=int, default=1, choices=[0, 1])
+
+    # ---- Legacy (kept for backward compatibility) ----
+    p.add_argument("--tversky_w", type=float, default=7.0)
+    p.add_argument("--imb_w", type=float, default=8.0)
+    p.add_argument("--nce_weight", type=float, default=3.5)
+    p.add_argument("--ab_freeze_epochs", type=int, default=10)
+    p.add_argument("--ab_kl", type=float, default=1e-3)
 
     return p.parse_args()
 
@@ -182,24 +206,6 @@ def main():
     seen = []
     prev_base_dir = None
 
-    # helper: just for logging
-    def _dataset_modalities_exist(data_path: str):
-        mods = []
-        for m in ["t1", "t2", "flair", "t1ce"]:
-            d = os.path.join(data_path, f"imgs_{m}")
-            if os.path.isdir(d):
-                mods.append(m)
-        return mods
-
-    def _rb_modalities_exist():
-        mods = []
-        if os.path.isdir("replay_buffer"):
-            for fn in os.listdir("replay_buffer"):
-                m = re.match(r"^replay_buffer_(.+)\.pth$", fn)
-                if m:
-                    mods.append(m.group(1))
-        return sorted(set(mods))
-
     for i, mod in enumerate(stages):
         base_dir = os.path.join(args.out_root, f"res-{mod}")
         prev_img_modes = seen.copy() if seen else None
@@ -213,11 +219,11 @@ def main():
             prev_img_modes=prev_img_modes,
             prev_base_dir=prev_base_dir,
 
-            # Replay/Queue & PER
+            # Replay buffer
             mem_size=args.mem_size,
             p_keep=args.p_keep,
 
-            # Core train
+            # Training schedule (paper: 200 epochs, batch 128)
             max_epoch=args.max_epoch,
             batch_size=args.batch_size,
             images_rate=args.images_rate,
@@ -227,15 +233,18 @@ def main():
             lr_scheduler=args.lr_scheduler,
             step_num_lr=args.step_num_lr,
 
-            # Loss weights (static init)
+            # Loss weights (static fallback)
             tversky_w=args.tversky_w,
             imb_w=args.imb_w,
             nce_weight=args.nce_weight,
 
-            # Tversky/FT params
+            # Tversky parameters (paper: α=0.7, β=1.5, γ=1.2)
             alpha=args.alpha,
             beta=args.beta,
             gamma=args.gamma,
+
+            # pTAC temperature (paper: τ=0.1)
+            tau=args.tau,
 
             # System
             in_channels=args.in_channels,
@@ -244,24 +253,19 @@ def main():
             device=device,
             seed=args.seed,
 
-            # Meta-hyper
+            # Meta Controller (paper: η_inner=1e-4, η_meta=1e-3, K=10)
             use_meta=args.use_meta,
             meta_lr=args.meta_lr,
-            init_tau=args.init_tau,
             init_lambda_proto=args.init_lambda_proto,
             init_tversky_w=args.init_tversky_w,
             init_imb_w=args.init_imb_w,
             proto_warmup_epochs=args.proto_warmup_epochs,
             ddp=args.ddp,
 
-            alpha_low=args.alpha_low,
-            alpha_high=args.alpha_high,
-            beta_low=args.beta_low,
-            beta_high=args.beta_high,
             ab_freeze_epochs=args.ab_freeze_epochs,
             ab_kl=args.ab_kl,
 
-            # Proto schedules
+            # Prototype scheduling
             proto_floor_start=args.proto_floor_start,
             proto_floor_end=args.proto_floor_end,
             proto_floor_epochs=args.proto_floor_epochs,
@@ -271,11 +275,11 @@ def main():
             proto_gain_span=args.proto_gain_span,
             proto_gain_max=args.proto_gain_max,
 
-            # EMA teacher for TAC
+            # EMA teacher
             new_teacher_is_ema=bool(args.new_teacher_is_ema),
             new_teacher_ema_m=args.new_teacher_ema_m,
 
-            # PER knobs
+            # PER
             per_enable=bool(args.per_enable),
             per_alpha=args.per_alpha,
             per_beta=args.per_beta,
@@ -286,36 +290,26 @@ def main():
             force_first_stage=(None if args.force_first_stage < 0 else bool(args.force_first_stage)),
             allow_prev_in_4ch=bool(args.allow_prev_in_4ch),
 
-            # Replay Training
+            # Replay training (paper: 1:1 current/replay)
             use_replay=bool(args.use_replay),
             replay_ratio=args.replay_ratio,
             replay_contrast_weight=args.replay_contrast_weight,
             replay_stratified=bool(args.replay_stratified),
 
-            # Stage-aware Meta (阶段感知)
-            stage_idx=i,                          # 当前阶段索引 (0-based)
-            num_stages=len(stages),               # 总阶段数
-            meta_equal_init=True,                 # 三个损失权重初始相等
+            # Stage-aware Meta
+            stage_idx=i,
+            num_stages=len(stages),
+            meta_equal_init=True,
         )
 
         if is_main:
             logging.info(f"[Stage {i+1}/{len(stages)}] modality={mod}")
             if prev_img_modes:
-                logging.info(f" prev_img_modes: {prev_img_modes}")
-            if prev_base_dir:
-                logging.info(f" prev_base_dir: {prev_base_dir}")
+                logging.info(f"  prev_modalities: {prev_img_modes}")
+            logging.info(f"  alpha={args.alpha}, beta={args.beta}, gamma={args.gamma}, tau={args.tau}")
+            logging.info(f"  lr={args.base_lr}, wd={args.weight_decay}, batch={args.batch_size}, epochs={args.max_epoch}")
             if args.use_meta:
-                logging.info(f" [meta] init_tau={args.init_tau}, lambda_proto={args.init_lambda_proto}, "
-                             f"w_tv={args.init_tversky_w}, w_ft={args.init_imb_w}, meta_lr={args.meta_lr}")
-            ds_mods = _dataset_modalities_exist(args.data_path)
-            rb_mods = _rb_modalities_exist()
-            logging.info(f" dataset_modalities: {ds_mods}")
-            logging.info(f" replay_buffer_modalities: {rb_mods}")
-            logging.info(f" mem_size={args.mem_size} p_keep={args.p_keep} "
-                         f"PER(enable={bool(args.per_enable)}, alpha={args.per_alpha}, "
-                         f"beta={args.per_beta}, ema={bool(args.per_use_ema)}, ema_m={args.per_ema_m})")
-            logging.info(f" replay_training(enable={bool(args.use_replay)}, ratio={args.replay_ratio}, "
-                         f"contrast_weight={args.replay_contrast_weight}, stratified={bool(args.replay_stratified)})")
+                logging.info(f"  [Meta Controller] lr_meta={args.meta_lr}, lr_inner={args.meta_inner_lr}, K={args.meta_update_freq}")
 
         run_stage(cfg)
 

@@ -157,7 +157,7 @@ class PatientGraphWeighter(nn.Module):
 
         # ========== 2) Topology-aware centrality score ==========
         # Eigenvector centrality via power iteration
-        s_topo = power_iteration_centrality(G, iters=20)  # [B], sum=1
+        s_topo = power_iteration_centrality(G, iters=10)  # [B], sum=1; paper: T=10
         # Z-score normalization (per-class 一致性)
         s_topo_n = (s_topo - s_topo.mean()) / (s_topo.std().clamp_min(1e-6))
 
