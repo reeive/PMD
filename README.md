@@ -1,4 +1,4 @@
-# From Semantic Drift to Objective Miscalibration: Domain Incremental Brain Tumor Segmentation with Missing Modality
+# PMD: From Semantic Drift to Objective Miscalibration: Domain Incremental Brain Tumor Segmentation with Missing Modality
 
 ## Overview
 
@@ -87,4 +87,4 @@ torchrun --nproc_per_node=4 train.py \
 
 ## Acknowledgments
 
-This work extends our prior MICCAI 2025 work [ReHyDIL](https://github.com/reeive/PMD) with three improvements: prototype-based Tversky-Aware Contrastive loss (pTAC) with PRM, an online Meta Controller for stage-adaptive loss reweighting, and expanded evaluation quantifying order sensitivity and OOD generalization.
+This work extends our prior MICCAI 2025 work [ReHyDIL](https://github.com/reeive/ReHyDIL) with three improvements: prototype-based Tversky-Aware Contrastive loss (pTAC) with PRM, an online Meta Controller for stage-adaptive loss reweighting, and expanded evaluation quantifying order sensitivity and OOD generalization.
