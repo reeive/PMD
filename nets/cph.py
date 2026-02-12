@@ -387,8 +387,4 @@ if __name__ == '__main__':
     model = CPH(n_classes=3, in_channels=4, norm='gn', gn_groups=16).to(device)
     inout = torch.randn((16, 4, 224, 224), device=device)
     logits, aux = model(inout, return_feats=True)
-    print(logits.shape, aux["feat_map"].shape)
-    print('# generator parameters (M):', 1.0 * sum(p.numel() for p in model.parameters()) / 1e6)
     macs, params = profile(model, inputs=(inout,))
-    print("FLOPs: {:.2f} GFLOPs".format(macs / 1e9))
-    print("Parameters: {:.2f} M".format(params / 1e6))

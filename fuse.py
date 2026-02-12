@@ -4,7 +4,7 @@ import argparse
 import numpy as np
 from pathlib import Path
 
-MODS = ["t1", "t2", "flair", "t1ce"]  # 必须与训练代码一致
+MODS = ["t1", "t2", "flair", "t1ce"]
 
 def load_cases_from_lists(list_paths):
     cases = []
@@ -14,7 +14,6 @@ def load_cases_from_lists(list_paths):
                 s = line.strip()
                 if s:
                     cases.append(s)
-    # 去重保持顺序
     seen = set()
     uniq = []
     for c in cases:
@@ -25,7 +24,6 @@ def load_cases_from_lists(list_paths):
 
 def _load_slice(path: Path) -> np.ndarray:
     x = np.load(str(path), allow_pickle=False)
-    # 允许 (224,224) 或 (1,224,224)
     if x.ndim == 3 and x.shape[0] == 1:
         x = x[0]
     if x.ndim != 2:
@@ -41,7 +39,7 @@ def main():
     ap.add_argument("--dtype", type=str, default="float16", choices=["float16", "float32"])
     ap.add_argument("--overwrite", type=int, default=0, choices=[0, 1])
     ap.add_argument("--fill_missing", type=int, default=0, choices=[0, 1],
-                    help="1=缺失模态用0填充；0=遇到缺失直接跳过该case")
+                    help="1=00=case")
     args = ap.parse_args()
 
     data_path = Path(args.data_path)
@@ -80,7 +78,6 @@ def main():
             skipped += 1
             continue
 
-        # 强约束：你的预处理保证 224×224，这里直接 assert
         for x in xs:
             if x.shape != (224, 224):
                 raise ValueError(f"Shape mismatch for case={case}: got {x.shape}, want (224,224)")
@@ -89,11 +86,6 @@ def main():
         np.save(str(outp), fused, allow_pickle=False)
         saved += 1
 
-        if saved % 5000 == 0:
-            print(f"[{saved}] saved... last={outp}")
-
-    print(f"[DONE] saved={saved} skipped={skipped} out_dir={out_dir}")
-    print(f"[MISSING] {miss}")
 
 if __name__ == "__main__":
     main()

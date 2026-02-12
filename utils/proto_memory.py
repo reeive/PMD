@@ -40,7 +40,7 @@ class PrototypeMemoryTopoEMA(nn.Module):
 
         support = None
         if avail is not None:
-            support = (avail.sum(dim=0) > 1e-6)  # [C]，该类在本 batch 是否出现
+            support = (avail.sum(dim=0) > 1e-6)
         else:
             support = torch.ones(C, dtype=torch.bool, device=f_cls.device)
 

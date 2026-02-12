@@ -100,24 +100,21 @@ class StageConfig:
     seed: int = 1111
     ddp: bool = False
 
-    # MetaHyper (真正的 Bi-level Meta-Learning 损失权重控制器)
     use_meta: bool = True
     meta_lr: float = 1e-3
-    meta_update_freq: int = 10          # Bi-level meta 更新频率 (每 K 步执行一次)
-    meta_bilevel: bool = True           # 是否启用 bi-level meta-learning
-    meta_unrolled: bool = True          # 是否使用 unrolled bi-level (推荐 True)
-    meta_inner_lr: float = 1e-4         # 虚拟更新的学习率
-    meta_first_order: bool = True       # 使用 first-order 近似 (推荐 True，降低开销)
-    meta_detach: bool = False           # True 表示 meta 只做"控制器输出"，不学习
-    meta_freeze_epochs: int = 10        # 前 N 个 epoch 冻结 meta 参数
-    meta_equal_init: bool = True        # 三个权重初始相等
+    meta_update_freq: int = 10
+    meta_bilevel: bool = True
+    meta_unrolled: bool = True
+    meta_inner_lr: float = 1e-4
+    meta_first_order: bool = True
+    meta_detach: bool = False
+    meta_freeze_epochs: int = 10
+    meta_equal_init: bool = True
     
-    # 损失权重初始值 (用于计算 w_total)
-    init_lambda_proto: float = 3.5      # pTAC 损失权重
-    init_tversky_w: float = 7.0         # Tversky 损失权重
-    init_imb_w: float = 8.0             # Focal Tversky 损失权重
+    init_lambda_proto: float = 3.5
+    init_tversky_w: float = 7.0
+    init_imb_w: float = 8.0
     
-    # pTAC 对比学习
     tau: float = 0.10                   # pTAC temperature (paper: τ=0.1)
     proto_warmup_epochs: int = 10
 
@@ -149,25 +146,21 @@ class StageConfig:
     force_first_stage: Optional[bool] = None
     allow_prev_in_4ch: bool = True
 
-    # ---- Replay Training (经验回放) ----
-    use_replay: bool = True                   # 是否启用 replay 训练
-    replay_ratio: float = 0.3                 # 每个 batch 中 replay 数据的比例
-    replay_contrast_weight: float = 1.0       # replay 对比学习损失权重
-    replay_stratified: bool = True            # 是否分层抽样 (按模态均衡)
+    use_replay: bool = True
+    replay_ratio: float = 0.3
+    replay_contrast_weight: float = 1.0
+    replay_stratified: bool = True
 
-    # ---- Stage-aware Meta (阶段感知) ----
-    stage_idx: int = 0                        # 当前阶段索引 (0-based)
-    num_stages: int = 4                       # 总阶段数
-    meta_equal_init: bool = True              # 三个损失权重是否初始相等
+    stage_idx: int = 0
+    num_stages: int = 4
+    meta_equal_init: bool = True
     
-    # ---- Bi-level Meta-Learning (元学习) ----
-    meta_bilevel: bool = True                 # 是否启用 bi-level meta-learning
-    meta_update_freq: int = 10                # 每 N 步进行一次 meta 更新
-    meta_query_ratio: float = 0.3             # query batch 占总 batch 的比例
+    meta_bilevel: bool = True
+    meta_update_freq: int = 10
+    meta_query_ratio: float = 0.3
     
-    # ---- PRM Gate (原型记忆门控) ----
-    prm_gate_ratio: float = 0.5               # 只保留 top-k% 的样本参与原型更新
-    prm_gate_min_samples: int = 2             # 最少保留的样本数
+    prm_gate_ratio: float = 0.5
+    prm_gate_min_samples: int = 2
 
 
 def _np_load(path: str, dtype=None):
@@ -316,7 +309,7 @@ def _build_optimizer(model: nn.Module, meta: Optional[nn.Module], cfg: StageConf
             {
                 "params": meta.parameters(),
                 "lr": cfg.meta_lr,
-                "weight_decay": 0.0,  # 建议 meta 不做 wd
+                "weight_decay": 0.0,
             }
         )
 
@@ -326,10 +319,8 @@ def _build_optimizer(model: nn.Module, meta: Optional[nn.Module], cfg: StageConf
     if n == "adamw":
         return optim.AdamW(param_groups)
     if n == "sgd":
-        # 注意：SGD 的 momentum 只对有意义的权重有效；meta 通常不建议 SGD
         return optim.SGD(param_groups, momentum=0.9)
     raise ValueError(cfg.optim_name)
-
 
 
 def _build_scheduler(optimizer, cfg: StageConfig):
@@ -338,7 +329,6 @@ def _build_scheduler(optimizer, cfg: StageConfig):
 
     def _maybe_group_lambdas(lambda_backbone):
         # group0: backbone
-        # group1: meta (保持常数)
         if n_groups >= 2 and cfg.use_meta:
             return [lambda_backbone, (lambda e: 1.0)]
         return lambda_backbone
@@ -378,7 +368,6 @@ def _build_scheduler(optimizer, cfg: StageConfig):
         )
 
     raise ValueError(cfg.lr_scheduler)
-
 
 
 def _gather_best_losses(best_loss_by_name: dict, ddp: bool, world_size: int):
@@ -455,14 +444,12 @@ def run_stage(cfg: StageConfig):
     allowed_idx = [i for i, v in enumerate(allowed_vec.tolist()) if v > 0.5]
     prev_idx_allowed = [i for i in allowed_idx if i != mode_idx]  # for 4ch input
     
-    # 对比学习使用所有前序模态的 prototype (不仅是 allowed 的)
-    # 这对于防止语义漂移至关重要
     prev_idx_for_contrast = []
     if cfg.prev_img_modes:
         for m in cfg.prev_img_modes:
             if m in MODS:
                 prev_idx_for_contrast.append(MODS.index(m))
-    prev_idx = prev_idx_for_contrast  # 用于 prototype 对比学习
+    prev_idx = prev_idx_for_contrast
 
     if is_main:
         allowed_list = [MODS[i] for i in allowed_idx]
@@ -526,18 +513,15 @@ def run_stage(cfg: StageConfig):
             **_dl_kwargs(cfg.num_workers_val, cfg.prefetch_val),
         )
 
-    # -------- Replay Buffer Loading (经验回放) --------
     replay_ds = None
     replay_loader = None
     mixed_batch_sampler = None
     use_replay_training = False
     
     if cfg.use_replay and (not is_first_stage) and (cfg.prev_img_modes is not None):
-        # 加载所有前序模态的 replay buffer
         replay_dict = _load_all_replay_buffers(cfg.prev_img_modes, device="cpu")
         
         if len(replay_dict) > 0:
-            # 创建 ReplayDataset
             replay_ds = ReplayDataset(
                 replay_dict=replay_dict,
                 fused_dir=fused_dir,
@@ -545,7 +529,6 @@ def run_stage(cfg: StageConfig):
                 dtype=cfg.fused_dtype,
             )
             
-            # 创建 Replay DataLoader
             replay_samples_per_epoch = int(len(train_ds) * cfg.replay_ratio)
             replay_loader = DataLoader(
                 replay_ds,
@@ -555,7 +538,6 @@ def run_stage(cfg: StageConfig):
                 **_dl_kwargs(cfg.num_workers_train // 2, cfg.prefetch_train),
             )
             
-            # 创建混合批次采样器
             mixed_batch_sampler = MixedBatchSampler(
                 current_dataset_size=len(train_ds),
                 replay_dataset=replay_ds,
@@ -595,9 +577,7 @@ def run_stage(cfg: StageConfig):
     proj_tumor = nn.Conv2d(C_mid, D, kernel_size=1, bias=False).to(device)
     proj_struct = nn.Conv2d(Cs, D, kernel_size=1, bias=False).to(device) if Cs is not None else None
 
-    # 【修复-严重3】使用单 prototype per class (Kt=1, Ks=1)
-    # 论文设计: "one prototype per subregion/class"，用于总结 "globally shared semantics"
-    proto_mem = PrototypeMemory(d=D, Kt=1, Ks=1, ema_m=0.05, learnable=False, device=str(device))
+    proto_mem = PrototypeMemory(d=D, Kt=1, Ks=1, ema_m=0.01, learnable=False, device=str(device))
 
     class Bundle(nn.Module):
         def __init__(self, a, pt, ps, c):
@@ -628,27 +608,22 @@ def run_stage(cfg: StageConfig):
                 if is_main:
                     logging.warning(f"[load] prototypes load failed: {e}")
 
-    # -------- MetaHyper (真正的 Bi-level Meta-Learning 损失权重控制器) --------
     w_total = cfg.init_tversky_w + cfg.init_imb_w + cfg.init_lambda_proto
     meta = MetaHyper(
         w_tv0=cfg.init_tversky_w,
         w_ft0=cfg.init_imb_w,
         w_proto0=cfg.init_lambda_proto,
         w_total=w_total,
-        # 阶段感知参数
         stage_idx=cfg.stage_idx,
         num_stages=cfg.num_stages,
         equal_init=cfg.meta_equal_init,
-        # Prototype 下限保护
         proto_floor_start=cfg.proto_floor_start,
         proto_floor_end=cfg.proto_floor_end,
-        # Bi-level Meta-Learning 参数
         meta_update_freq=int(getattr(cfg, "meta_update_freq", 10)),
         inner_lr=float(getattr(cfg, "meta_inner_lr", 1e-4)),
         first_order=bool(getattr(cfg, "meta_first_order", True)),
     ).to(device)
     
-    # 判断是否使用 unrolled bi-level
     use_unrolled_meta = bool(getattr(cfg, "meta_unrolled", True)) and cfg.use_meta and cfg.meta_bilevel
     
     if is_main:
@@ -674,12 +649,9 @@ def run_stage(cfg: StageConfig):
     optimizer = _build_optimizer(bundle, meta, cfg)
     scheduler = _build_scheduler(optimizer, cfg)
     
-    # ========== 加载前一 stage 的训练状态 (完整状态传递) ==========
-    # 这样可以实现跨 stage 的训练连续性，避免从头初始化
     if cfg.prev_base_dir:
         prev_dir = Path(cfg.prev_base_dir)
         
-        # 加载 MetaHyper 状态
         meta_state_file = prev_dir / "training_state.pt"
         if meta_state_file.exists() and cfg.use_meta:
             try:
@@ -688,17 +660,14 @@ def run_stage(cfg: StageConfig):
                 except TypeError:
                     prev_state = torch.load(str(meta_state_file), map_location=device)
                 
-                # 加载 MetaHyper 状态 (除了阶段相关的 buffer)
                 if "meta" in prev_state and prev_state["meta"] is not None:
                     meta_state = prev_state["meta"]
-                    # 过滤掉阶段相关的 buffer，因为新 stage 有新的阶段配置
                     keys_to_skip = ["stage_bias", "proto_floor", "recent_val_loss", "ema_val_loss", "val_loss_count"]
                     filtered_state = {k: v for k, v in meta_state.items() if k not in keys_to_skip}
                     M(meta).load_state_dict(filtered_state, strict=False)
                     if is_main:
                         logging.info(f"[load] MetaHyper state loaded from previous stage (partial, excluding stage-specific buffers)")
                 
-                # 可选：加载 optimizer 状态 (通常不建议，因为参数空间可能变化)
                 # if "optimizer" in prev_state and prev_state["optimizer"] is not None:
                 #     optimizer.load_state_dict(prev_state["optimizer"])
                 
@@ -710,7 +679,6 @@ def run_stage(cfg: StageConfig):
                 if is_main:
                     logging.warning(f"[load] training_state load failed: {e}")
         
-        # 加载 projections (用于特征提取的一致性)
         proj_file = prev_dir / "projections.pt"
         if proj_file.exists():
             try:
@@ -730,7 +698,6 @@ def run_stage(cfg: StageConfig):
                 if is_main:
                     logging.warning(f"[load] projections load failed: {e}")
 
-    # -------- patient graph weighter (带 PRM Gate) --------
     weighter = PatientGraphWeighter(
         k=int(getattr(cfg, "patient_graph_k", 5)),
         sigma=float(getattr(cfg, "patient_graph_sigma", 1.0)),
@@ -740,7 +707,6 @@ def run_stage(cfg: StageConfig):
         d_conf=float(getattr(cfg, "patient_graph_d_conf", 0.2)),
         kappa=float(getattr(cfg, "patient_graph_kappa", 5.0)),
         mix_uniform=float(getattr(cfg, "patient_graph_mix_uniform", 0.1)),
-        # PRM Gate 参数
         gate_ratio=float(getattr(cfg, "prm_gate_ratio", 0.5)),
         gate_min_samples=int(getattr(cfg, "prm_gate_min_samples", 2)),
         gate_score_thresh=float(getattr(cfg, "prm_gate_score_thresh", 0.0)),
@@ -770,25 +736,22 @@ def run_stage(cfg: StageConfig):
             dist.all_reduce(no_ce_local, op=dist.ReduceOp.SUM)
         return bool(no_ce_local.item() > 0.0)
 
-    # 【修复-严重1】移除 @torch.no_grad() 以恢复 pTAC 梯度流
-    # 原问题：pTAC 对比损失的 region features 在 no_grad 下计算，导致梯度断链
-    # 修复后：region features 保持梯度，pTAC loss 可以正确反向传播到 backbone
     def _pool_regions_bcd(feat_map: torch.Tensor, masks3_224: torch.Tensor, probs3_224: torch.Tensor):
         """
         Region-wise feature pooling (mask-weighted average)
         
-        将 feature map 按照 mask 区域进行加权平均，得到每个区域的表示向量。
+        Region-wise feature pooling via mask-weighted averaging.
         
         Args:
-            feat_map:   [B, D, h, w] - 投影后的特征图
-            masks3_224: [B, 3, 224, 224] - 三个区域的 mask (WT/TC/ET)
-            probs3_224: [B, 3, 224, 224] - 预测概率
+            feat_map:   [B, D, h, w] - projected feature map
+            masks3_224: [B, 3, 224, 224] - region masks (WT/TC/ET)
+            probs3_224: [B, 3, 224, 224] - predicted probabilities
             
         Returns:
-            f_bcd:    [B, 3, D] - 每个区域的特征向量 (保持梯度)
-            avail_bc: [B, 3] - 每个区域是否有效
-            conf_bc:  [B, 3] - 每个区域的置信度
-            m_ds:     [B, 3, h, w] - 下采样后的 mask
+            f_bcd:    [B, 3, D] - per-region feature vectors (gradient-preserving)
+            avail_bc: [B, 3] - per-region validity flags
+            conf_bc:  [B, 3] - per-region confidence scores
+            m_ds:     [B, 3, h, w] - downsampled masks
         """
         B, D_, h, w = feat_map.shape
         m_ds = F.adaptive_avg_pool2d(masks3_224.float(), output_size=(h, w))  # [B,3,h,w]
@@ -797,13 +760,12 @@ def run_stage(cfg: StageConfig):
 
         feat_flat = feat_map.flatten(2)  # [B,D,HW]
         wgt_flat = wgt.flatten(2)        # [B,3,HW]
-        f_bcd = torch.einsum("bdn,bcn->bcd", feat_flat, wgt_flat)  # [B,3,D] 保持梯度
+        f_bcd = torch.einsum("bdn,bcn->bcd", feat_flat, wgt_flat)
 
         area224 = masks3_224.flatten(2).sum(-1)  # [B,3]
         avail_bc = (area224 > 1e-6).to(f_bcd.dtype)
         f_bcd = f_bcd * avail_bc.unsqueeze(-1)
 
-        # conf 计算使用 detach 的 probs，因为 conf 只用于 weighting，不需要梯度
         conf_bc = (probs3_224.detach() * masks3_224).flatten(2).sum(-1) / area224.clamp_min(1e-6)
         conf_bc = conf_bc * avail_bc
         return f_bcd, avail_bc, conf_bc, m_ds
@@ -830,25 +792,22 @@ def run_stage(cfg: StageConfig):
 
     def _get_meta_params(ref: torch.Tensor, detach_meta: bool = False):
         """
-        获取损失计算所需的参数
+        Get parameters for loss computation.
         
-        - α, β, τ: 静态配置值
-        - w_tv, w_ft, w_proto: 从 MetaHyper 动态获取
+        - α, β, τ: static config values
+        - w_tv, w_ft, w_proto: dynamically obtained from MetaHyper
         
         Returns:
             w_tv, w_ft, w_proto, alpha_tv, beta_tv, tau_val
         """
-        # α, β, τ 使用静态配置值
         alpha_tv = ref.new_tensor(cfg.alpha)
         beta_tv = ref.new_tensor(cfg.beta)
         tau_val = ref.new_tensor(cfg.tau)
         
-        # 默认权重
         w_tv = ref.new_tensor(cfg.init_tversky_w)
         w_ft = ref.new_tensor(cfg.init_imb_w)
         w_proto = ref.new_tensor(cfg.init_lambda_proto)
 
-        # 从 MetaHyper 获取动态权重
         if cfg.use_meta:
             mod = M(meta)
             try:
@@ -865,7 +824,6 @@ def run_stage(cfg: StageConfig):
         beta_tv = beta_tv.to(ref.device, ref.dtype)
         tau_val = tau_val.to(ref.device, ref.dtype)
 
-        # ---- detach if needed (只对权重生效，α/β/τ 是静态的) ----
         if detach_meta:
             w_tv = w_tv.detach()
             w_ft = w_ft.detach()
@@ -927,10 +885,8 @@ def run_stage(cfg: StageConfig):
         if cfg.use_meta and hasattr(M(meta), "reset_step_count"):
             M(meta).reset_step_count()
         
-        # 创建 validation iterator 用于 bi-level meta-learning
-        val_iter = None
-        if cfg.use_meta and getattr(cfg, "meta_bilevel", True):
-            val_iter = iter(val_loader)
+        # Note: val_iter no longer used for bi-level meta-learning;
+        # meta updates now split the current training batch per Algorithm 1
 
         # Setup replay iterator for this epoch
         replay_iter = None
@@ -1036,15 +992,13 @@ def run_stage(cfg: StageConfig):
 
             finite = [l for l in proto_losses if torch.isfinite(l)]
             if len(finite) > 0:
-                proto_cl_loss = torch.stack(finite).mean()  # 平均每个 term
-                proto_cl_loss = proto_cl_loss / max(1.0, float(imgs_in.size(0)))  # 再按 batch 归一
+                proto_cl_loss = torch.stack(finite).mean()
+                proto_cl_loss = proto_cl_loss / max(1.0, float(imgs_in.size(0)))
             else:
                 proto_cl_loss = probs.new_tensor(0.0)
 
             proto_cl_loss = warm * gain * proto_cl_loss
 
-            # -------- Replay Training: 监督损失 + 对比学习 (经验回放完整训练) --------
-            # 修复【严重-3】: Replay 数据现在同时参与监督损失和对比学习损失
             replay_cl_loss = probs.new_tensor(0.0)
             replay_sup_loss = probs.new_tensor(0.0)
             
@@ -1052,11 +1006,9 @@ def run_stage(cfg: StageConfig):
                 try:
                     replay_batch = next(replay_iter)
                 except StopIteration:
-                    # 重置 iterator
                     replay_iter = iter(replay_loader)
                     replay_batch = next(replay_iter)
                 
-                # 处理 replay batch
                 replay_imgs = replay_batch["image4_full"].to(device=device, dtype=torch.float32, non_blocking=True)
                 replay_masks = replay_batch["mask"].to(device=device, dtype=torch.float32, non_blocking=True)
                 replay_present = replay_batch["present_full"].to(device=device, dtype=torch.float32, non_blocking=True)
@@ -1065,10 +1017,8 @@ def run_stage(cfg: StageConfig):
                 if replay_present.ndim == 1:
                     replay_present = replay_present.unsqueeze(0).repeat(replay_imgs.size(0), 1)
                 
-                # 前向传播 replay 数据 (不再使用 no_grad，允许梯度传播)
                 replay_imgs_in = replay_imgs * replay_present.view(replay_imgs.size(0), 4, 1, 1)
                 
-                # ========== Replay 前向传播 (有梯度) ==========
                 replay_out = M(bundle).net(replay_imgs_in, return_feats=True, return_graph=True)
                 if isinstance(replay_out, tuple):
                     replay_logits, replay_aux = replay_out
@@ -1077,24 +1027,18 @@ def run_stage(cfg: StageConfig):
                 
                 replay_probs = torch.sigmoid(replay_logits)
                 
-                # ========== Replay 监督损失 (Tversky + Focal Tversky) ==========
-                # 这是修复的核心: replay 数据参与分割监督损失，防止对旧模态的分割能力退化
                 replay_loss_tv = (1.0 - tversky_prob(replay_probs, replay_masks, alpha_tv, beta_tv, smooth=1.0)).mean()
                 replay_loss_ft = focal_tversky_prob(replay_probs, replay_masks, alpha_tv, beta_tv, gamma=cfg.gamma, smooth=1.0).mean()
                 
-                # replay 监督损失按比例加权
-                replay_sup_weight = cfg.replay_ratio  # 使用 replay_ratio 作为监督损失的权重
+                replay_sup_weight = cfg.replay_ratio
                 replay_sup_loss = replay_sup_weight * (w_tv * replay_loss_tv + w_ft * replay_loss_ft)
                 
-                # ========== Replay 特征提取 (用于对比学习) ==========
-                # 提取 replay 特征
                 if "feat_map" in replay_aux:
                     replay_F_mid = replay_aux["feat_map"]
                     replay_F_proj = M(bundle).proj_tumor(replay_F_mid)
                 else:
                     replay_F_proj = M(bundle).proj_tumor(replay_logits)
                 
-                # 结构特征
                 if use_struct and "struct_maps" in replay_aux:
                     rs2, rs3 = replay_aux["struct_maps"]
                     rs3u = F.interpolate(rs3, size=rs2.shape[2:], mode="bilinear", align_corners=False)
@@ -1103,7 +1047,6 @@ def run_stage(cfg: StageConfig):
                 else:
                     replay_Sproj = F.avg_pool2d(replay_F_proj, kernel_size=3, stride=1, padding=1)
                 
-                # 池化 replay 区域特征（保留梯度，使 replay 对比损失可回传到主网络）
                 replay_f_t_bcd, replay_avail_bc, replay_conf_bc, _ = _pool_regions_bcd(
                     replay_F_proj, replay_masks, replay_probs
                 )
@@ -1111,22 +1054,16 @@ def run_stage(cfg: StageConfig):
                     replay_Sproj, replay_masks, replay_probs
                 )
                 
-                # ========== Replay 对比学习：以 prototype 为锚点 ==========
-                # 策略：让 replay 样本的特征也与当前模态的原型对比
-                # 这样可以保持跨模态的语义一致性，防止灾难性遗忘
                 
                 replay_proto_losses = []
                 
-                # Replay tumor branch: 让 replay 样本与所有模态的原型对比
                 for ridx in (0, 1, 2):
                     z_replay = replay_f_t_bcd[:, ridx, :][replay_avail_bc[:, ridx].bool()]
                     if z_replay.numel() == 0:
                         continue
                     
-                    # 正样本：同区域的所有模态原型 (包括当前和前序)
                     pos = torch.cat([tumorP[(mi, ridx)] for mi in mi_list], dim=0)
                     
-                    # 负样本：不同区域的所有模态原型
                     neg_groups = []
                     for r2 in (0, 1, 2):
                         if r2 == ridx:
@@ -1150,7 +1087,6 @@ def run_stage(cfg: StageConfig):
                                    tau=tau_val, smooth=1.0, act="sigmoid")
                     )
                 
-                # 计算 replay 对比损失
                 replay_finite = [l for l in replay_proto_losses if torch.isfinite(l)]
                 if len(replay_finite) > 0:
                     replay_cl_loss = torch.stack(replay_finite).mean()
@@ -1160,9 +1096,6 @@ def run_stage(cfg: StageConfig):
                 replay_loss_sum += float((replay_cl_loss + replay_sup_loss).detach().item())
                 replay_batches += 1
 
-            # total loss: 当前数据损失 + replay 监督损失 + replay 对比损失
-            # replay_sup_loss: 防止分割能力退化
-            # replay_cl_loss: 防止语义漂移
             loss_total = w_tv * loss_tv + w_ft * loss_ft + w_proto * proto_cl_loss + replay_sup_loss + replay_cl_loss
 
             optimizer.zero_grad(set_to_none=True)
@@ -1170,30 +1103,31 @@ def run_stage(cfg: StageConfig):
             optimizer.step()
             
             # ========== Bi-level Meta-Learning: One-Step Unrolled Update ==========
-            # 真正的 bi-level: w -> θ' -> L_val(θ') -> ∇_w
-            if cfg.use_meta and getattr(cfg, "meta_bilevel", True) and val_iter is not None:
+            # Per Algorithm 1: split Davail into disjoint Dsup and Dval
+            if cfg.use_meta and getattr(cfg, "meta_bilevel", True):
                 if hasattr(M(meta), "should_meta_update") and M(meta).should_meta_update():
                     try:
-                        # 获取 validation batch (query batch)
-                        try:
-                            val_batch = next(val_iter)
-                        except StopIteration:
-                            val_iter = iter(val_loader)
-                            val_batch = next(val_iter)
-                        
-                        val_imgs = val_batch["image4_full"].to(device=device, dtype=torch.float32, non_blocking=True)
-                        val_masks = val_batch["mask"].to(device=device, dtype=torch.float32, non_blocking=True)
+                        # ===== Disjoint split from current batch (Algorithm 1, Step 1) =====
+                        B_cur = imgs_in.size(0)
+                        split_point = max(1, B_cur // 2)
+                        perm = torch.randperm(B_cur, device=imgs_in.device)
+                        sup_idx, val_idx = perm[:split_point], perm[split_point:]
+                        if val_idx.numel() == 0:
+                            val_idx = sup_idx  # fallback for batch_size=1
+                        sup_imgs = imgs_in[sup_idx]
+                        sup_masks = masks[sup_idx]
+                        val_imgs = imgs_in[val_idx]
+                        val_masks = masks[val_idx]
                         
                         with torch.enable_grad():
-                            # ========== 使用 Unrolled Bi-level Meta-Learning ==========
                             if use_unrolled_meta and hasattr(M(meta), "meta_step_unrolled"):
-                                # Support batch = 当前 training batch
-                                # Query batch = validation batch
+                                # Support batch = first half of current batch
+                                # Query batch = second half (disjoint)
                                 meta_loss, meta_stats = M(meta).meta_step_unrolled(
                                     model=M(bundle).net,
-                                    support_imgs=imgs_in.detach(),  # detach 避免影响主训练
-                                    support_masks=masks,
-                                    query_imgs=val_imgs,
+                                    support_imgs=sup_imgs.detach(),
+                                    support_masks=sup_masks,
+                                    query_imgs=val_imgs.detach(),
                                     query_masks=val_masks,
                                     alpha=cfg.alpha,
                                     beta=cfg.beta,
@@ -1201,7 +1135,6 @@ def run_stage(cfg: StageConfig):
                                     proto_loss_sup=proto_cl_loss.detach() if torch.isfinite(proto_cl_loss) else None,
                                 )
                             else:
-                                # Fallback: 旧的 meta_step (不推荐)
                                 val_logits = M(bundle).net(val_imgs)
                                 val_probs = torch.sigmoid(val_logits)
                                 meta_loss, meta_stats = M(meta).meta_step(
@@ -1213,16 +1146,13 @@ def run_stage(cfg: StageConfig):
                                     proto_loss=proto_cl_loss.detach() if torch.isfinite(proto_cl_loss) else None,
                                 )
                             
-                            # ========== 只更新 MetaHyper 的参数 ==========
                             optimizer.zero_grad(set_to_none=True)
                             meta_loss.backward()
                             
-                            # ========== Sanity Check: logits 梯度非零 ==========
                             logits_grad_norm = 0.0
                             if hasattr(M(meta), "logits") and M(meta).logits.grad is not None:
                                 logits_grad_norm = float(M(meta).logits.grad.norm().item())
                             
-                            # 只对 meta 参数组进行更新 (清除主网络梯度)
                             if len(optimizer.param_groups) >= 2:
                                 for param in optimizer.param_groups[0]["params"]:
                                     param.grad = None
@@ -1232,7 +1162,6 @@ def run_stage(cfg: StageConfig):
                             meta_update_count += 1
                             meta_loss_sum += float(meta_loss.detach().item())
                             
-                            # ========== 日志: 每次 meta update 输出详细信息 ==========
                             if is_main and (meta_update_count == 1 or meta_update_count % 10 == 0):
                                 w_tv_now = meta_stats.get("w_tv", 0)
                                 w_ft_now = meta_stats.get("w_ft", 0)
@@ -1247,11 +1176,9 @@ def run_stage(cfg: StageConfig):
                                     f"grad_norm={logits_grad_norm:.4f}"
                                 )
                                 
-                                # 权重塌缩警告
                                 if "warning" in meta_stats:
                                     logging.warning(f"[Meta] {meta_stats['warning']}")
                                 
-                                # 梯度为零警告
                                 if logits_grad_norm < 1e-8:
                                     logging.warning(f"[Meta] logits gradient is near zero! Check computation graph.")
                                     
@@ -1262,71 +1189,56 @@ def run_stage(cfg: StageConfig):
                             traceback.print_exc()
 
             # ---- hypergraph-weighted prototype EMA update (with gate) ----
-            # PRM 核心: patient-level gate + reliability-weighted EMA
             with torch.no_grad():
-                # ========== 修复 H2: z_patient 来自 encoder (hypergraph-fused features) ==========
-                # 论文要求: patient embedding 来自 hypergraph-fused encoder features (E4/E5)
-                # 而非 decoder 特征
                 if use_struct and "struct_maps" in aux:
-                    # 使用 struct_maps (来自 HyperEncoder 的 E4/E5 层)
                     s2_enc, s3_enc = aux["struct_maps"]
-                    # 全局平均池化得到 patient-level embedding
                     z_enc_2 = s2_enc.flatten(2).mean(-1)  # [B, C_s2]
                     z_enc_3 = s3_enc.flatten(2).mean(-1)  # [B, C_s3]
                     z_local = torch.cat([z_enc_2, z_enc_3], dim=1)  # [B, C_s2+C_s3]
                 else:
-                    # Fallback: 使用投影后的 decoder 特征
                     z_local = F_proj.flatten(2).mean(-1)  # [B, D]
                 
                 z_all = _all_gather_cat(z_local)
 
-                # detach region features 用于 prototype 更新（不需要梯度）
                 f_t_all = _all_gather_cat(f_t_bcd.detach())
                 f_s_all = _all_gather_cat(f_s_bcd.detach())
                 avail_all = _all_gather_cat(avail_bc)
                 conf_all = _all_gather_cat(conf_bc)
 
                 # ========== PRM Core: patient-level gate + reliability weighting ==========
-                # omega: [N, C] 权重矩阵 (每列和为 1)
-                # gate_mask: [N, C] bool 矩阵 (patient-level gate 展开到 class)
                 omega_t, gate_mask_t = weighter(z_patient=z_all, f_cls=f_t_all, conf_cls=conf_all, return_gate_mask=True)
                 omega_s, gate_mask_s = weighter(z_patient=z_all, f_cls=f_s_all, conf_cls=conf_all, return_gate_mask=True)
 
                 def weighted_mean_per_class(omega: torch.Tensor, f_all: torch.Tensor, 
                                             avail_all_: torch.Tensor, gate_mask: torch.Tensor):
                     """
-                    计算 gate-weighted mean for prototype update
+                    Compute gate-weighted mean for prototype update.
                     
-                    公式: \tilde{P}_c = Σ_n ω_{n,c} * g_n * \hat{P}_{n,c}
-                    其中 g_n 是 patient-level gate, ω_{n,c} 是 reliability weight
+                    Formula: P_tilde_c = sum_n omega_{n,c} * g_n * P_hat_{n,c}
+                    where g_n is a patient-level gate, omega_{n,c} is reliability weight
                     
-                    只有通过 hypergraph gate 且区域有效的 representative samples 参与 prototype 更新，
-                    抑制 outliers，减少 semantic overwriting。
+                    Only representative samples passing the hypergraph gate with valid regions
+                    participate in prototype update, suppressing outliers.
                     
                     Args:
-                        omega: [N, C] 权重 (已经由 PatientGraphWeighter 内部应用了 gate)
-                        f_all: [N, C, D] 特征 (proposals)
-                        avail_all_: [N, C] 区域可用性 (GT 面积 > 0)
-                        gate_mask: [N, C] gate 通过标记 (patient-level)
+                        omega: [N, C] weights (gate already applied by PatientGraphWeighter)
+                        f_all: [N, C, D] features (proposals)
+                        avail_all_: [N, C] region availability (GT area > 0)
+                        gate_mask: [N, C] gate mask (patient-level)
                     
                     Returns:
-                        g: [C, D] 加权平均后的 prototype 更新值 (L2 normalized)
-                        valid: [C] 每个区域是否有有效更新
+                        g: [C, D] gate-weighted prototype update (L2 normalized)
+                        valid: [C] per-region validity of the update
                     """
-                    # 显式应用 gate_mask 和 avail_mask
-                    # 只有 gated=True 且 avail=True 的 (n,c) 才参与
                     omega_gated = omega * gate_mask.float()
                     omega_eff = omega_gated * avail_all_
                     
                     denom = omega_eff.sum(dim=0)  # [C]
                     valid = denom > 1e-6
-                    omega_eff = omega_eff / denom.clamp_min(1e-6).unsqueeze(0)  # 重新归一化到 gated+valid set
+                    omega_eff = omega_eff / denom.clamp_min(1e-6).unsqueeze(0)
                     
-                    # 加权平均
                     g = torch.einsum("nc,ncd->cd", omega_eff, f_all)  # [C, D]
                     
-                    # ========== 修复 H3: L2 normalize 再 EMA ==========
-                    # 论文要求: 对聚合结果 L2 normalize 后再进行 EMA 更新
                     g = F.normalize(g, dim=-1, eps=1e-6)
                     
                     return g, valid
@@ -1334,10 +1246,9 @@ def run_stage(cfg: StageConfig):
                 g_t, valid_t = weighted_mean_per_class(omega_t, f_t_all, avail_all, gate_mask_t)
                 g_s, valid_s = weighted_mean_per_class(omega_s, f_s_all, avail_all, gate_mask_s)
                 
-                # 记录 gate 统计 (每个 epoch 第一个 batch)
                 if is_main and train_batches == 1:
                     gate_stats_t = weighter.get_gate_stats(gate_mask_t)
-                    n_gated = gate_mask_t[:, 0].sum().item()  # patient-level 所有 class 相同
+                    n_gated = gate_mask_t[:, 0].sum().item()
                     logging.info(f"[PRM Gate] {int(n_gated)} / {gate_stats_t['total_samples']} patients passed (patient-level gate)")
 
                 for ridx in (0, 1, 2):
@@ -1573,8 +1484,6 @@ def run_stage(cfg: StageConfig):
         except Exception as e:
             logging.warning(f"[save] projections failed: {e}")
         
-        # ========== 完整训练状态保存 (用于跨 stage 传递) ==========
-        # 保存 optimizer, scheduler, meta 状态，确保训练连续性
         try:
             full_state = {
                 "optimizer": optimizer.state_dict(),
@@ -1589,8 +1498,6 @@ def run_stage(cfg: StageConfig):
             logging.info(f"[save] training_state -> {os.path.join(cfg.base_dir, 'training_state.pt')}")
         except Exception as e:
             logging.warning(f"[save] training_state failed: {e}")
-        except Exception as e:
-            logging.warning(f"[save] projections failed: {e}")
 
         # save last model
         try:

@@ -1,14 +1,11 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-eval.py - 评估脚本 for PMD (Prototype-guided Multi-modal DIL Segmentation)
+eval.py -  for PMD (Prototype-guided Multi-modal DIL Segmentation)
 
-支持:
-- 多模态评估 (t1, t2, flair, t1ce 及其组合)
-- 15 种模态缺失场景
+-  (t1, t2, flair, t1ce )
 - TTA (Test-Time Augmentation)
-- 批量评估多个 stage 的模型
-- 详细指标: Dice, Sensitivity, PPV per region (WT/TC/ET)
+- : Dice, Sensitivity, PPV per region (WT/TC/ET)
 
 Usage:
     python eval.py --model_path res-t1ce/model_CPH_best.pth --data_path /path/to/data --test_list test.list
@@ -36,11 +33,9 @@ from utils.metrics import dice as dice_single, batch_dice
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-# 模态顺序: t1, t2, flair, t1ce
 MODS = ["t1", "t2", "flair", "t1ce"]
 REGIONS = ["WT", "TC", "ET"]
 
-# 15 种模态组合 (用于完整评估)
 ALL_MODAL_CODES = [
     [1, 1, 1, 1],  # 0: all modalities
     [0, 1, 1, 1],  # 1: missing t1
@@ -63,7 +58,6 @@ ALL_MODAL_CODES = [
 def parse_args():
     parser = argparse.ArgumentParser(description='PMD Evaluation Script')
     
-    # 模型和数据路径
     parser.add_argument('--model_path', type=str, required=True,
                         help='Path to model checkpoint (e.g., res-t1ce/model_CPH_best.pth)')
     parser.add_argument('--data_path', type=str, required=True,
@@ -73,7 +67,6 @@ def parse_args():
     parser.add_argument('--fused_dir', type=str, default='BraTS_fusedslice',
                         help='Directory name for 4-channel fused images')
     
-    # 评估设置
     parser.add_argument('--batch_size', type=int, default=16,
                         help='Batch size for evaluation')
     parser.add_argument('--num_workers', type=int, default=4,
@@ -81,19 +74,16 @@ def parse_args():
     parser.add_argument('--in_channels', type=int, default=4,
                         help='Number of input channels')
     
-    # 模态设置
     parser.add_argument('--modal_code', type=str, default='1,1,1,1',
                         help='Modal availability code (comma-separated, e.g., "1,1,1,0" for missing t1ce)')
     parser.add_argument('--eval_all_codes', action='store_true',
                         help='Evaluate all 15 modal codes')
     
-    # TTA 设置
     parser.add_argument('--use_TTA', action='store_true',
                         help='Use Test-Time Augmentation (horizontal/vertical flip)')
     parser.add_argument('--tta_modes', type=str, default='hflip,vflip,hv',
                         help='TTA modes: hflip, vflip, hv (comma-separated)')
     
-    # 输出设置
     parser.add_argument('--output_dir', type=str, default=None,
                         help='Output directory for results (default: same as model_path)')
     parser.add_argument('--save_predictions', action='store_true',
@@ -101,7 +91,6 @@ def parse_args():
     parser.add_argument('--threshold', type=float, default=0.5,
                         help='Threshold for binary segmentation')
     
-    # GPU 设置
     parser.add_argument('--device', type=str, default='cuda',
                         help='Device to use (cuda or cpu)')
     
@@ -110,7 +99,6 @@ def parse_args():
 
 class EvalDataset(Dataset):
     """
-    评估用数据集: 加载 4 通道融合图像并应用模态掩码
     """
     def __init__(
         self,
@@ -126,13 +114,10 @@ class EvalDataset(Dataset):
         if not self.mask_dir.exists():
             self.mask_dir = self.data_dir / 'masks'
         
-        # 模态掩码
         self.modal_code = np.array(modal_code if modal_code else [1, 1, 1, 1], dtype=np.float32)
         
-        # 单模态目录 (fallback)
         self.mod_dirs = {m: self.data_dir / f'imgs_{m}' for m in MODS}
         
-        # 加载样本列表
         self.sample_list = []
         list_path = self.data_dir / list_name
         with open(list_path, 'r') as f:
@@ -145,7 +130,6 @@ class EvalDataset(Dataset):
         logging.info(f"[Eval] Modal code: {self.modal_code.tolist()} ({self._code_to_str()})")
     
     def _code_to_str(self) -> str:
-        """将模态码转换为可读字符串"""
         present = [MODS[i] for i in range(4) if self.modal_code[i] > 0]
         return '+'.join(present) if present else 'none'
     
@@ -153,7 +137,6 @@ class EvalDataset(Dataset):
         return len(self.sample_list)
     
     def _load_fused(self, sid: str) -> Optional[np.ndarray]:
-        """加载 4 通道融合图像"""
         path = self.fused_dir / f'{sid}.npy'
         if path.exists():
             arr = np.load(str(path)).astype(np.float32)
@@ -164,7 +147,6 @@ class EvalDataset(Dataset):
         return None
     
     def _load_single_mods(self, sid: str) -> np.ndarray:
-        """从单模态目录加载并堆叠"""
         H, W = None, None
         channels = []
         
@@ -199,16 +181,13 @@ class EvalDataset(Dataset):
     def __getitem__(self, idx):
         sid = self.sample_list[idx]
         
-        # 加载图像
         img4 = self._load_fused(sid)
         if img4 is None:
             img4 = self._load_single_mods(sid)
         
-        # 应用模态掩码
         mask_4d = self.modal_code.reshape(4, 1, 1)
         img4 = img4 * mask_4d
         
-        # 加载 ground truth mask
         mask_path = self.mask_dir / f'{sid}.npy'
         gt_mask = np.load(str(mask_path)).astype(np.float32)
         if gt_mask.ndim == 2:
@@ -224,25 +203,19 @@ class EvalDataset(Dataset):
 
 def apply_tta(model: nn.Module, x: torch.Tensor, tta_modes: List[str]) -> torch.Tensor:
     """
-    应用 Test-Time Augmentation
     
     Args:
-        model: 模型
-        x: 输入图像 [B, C, H, W]
-        tta_modes: TTA 模式列表
+        x:  [B, C, H, W]
     
     Returns:
-        平均后的预测结果
     """
     outputs = []
     
-    # 原始预测
     out = model(x)
     if isinstance(out, tuple):
         out = out[0]
     outputs.append(torch.sigmoid(out))
     
-    # 水平翻转
     if 'hflip' in tta_modes:
         x_flip = torch.flip(x, dims=[3])
         out_flip = model(x_flip)
@@ -250,7 +223,6 @@ def apply_tta(model: nn.Module, x: torch.Tensor, tta_modes: List[str]) -> torch.
             out_flip = out_flip[0]
         outputs.append(torch.flip(torch.sigmoid(out_flip), dims=[3]))
     
-    # 垂直翻转
     if 'vflip' in tta_modes:
         x_flip = torch.flip(x, dims=[2])
         out_flip = model(x_flip)
@@ -258,7 +230,6 @@ def apply_tta(model: nn.Module, x: torch.Tensor, tta_modes: List[str]) -> torch.
             out_flip = out_flip[0]
         outputs.append(torch.flip(torch.sigmoid(out_flip), dims=[2]))
     
-    # 水平 + 垂直翻转
     if 'hv' in tta_modes or 'hvflip' in tta_modes:
         x_flip = torch.flip(x, dims=[2, 3])
         out_flip = model(x_flip)
@@ -266,20 +237,17 @@ def apply_tta(model: nn.Module, x: torch.Tensor, tta_modes: List[str]) -> torch.
             out_flip = out_flip[0]
         outputs.append(torch.flip(torch.sigmoid(out_flip), dims=[2, 3]))
     
-    # 平均
     return torch.stack(outputs, dim=0).mean(dim=0)
 
 
 def compute_metrics(pred: np.ndarray, target: np.ndarray) -> Dict[str, float]:
     """
-    计算单个样本的分割指标
     
     Args:
-        pred: 预测 [3, H, W] (WT, TC, ET)
-        target: 标签 [3, H, W]
+        pred:  [3, H, W] (WT, TC, ET)
+        target:  [3, H, W]
     
     Returns:
-        包含 Dice, Sensitivity, PPV 的字典
     """
     metrics = {}
     
@@ -293,7 +261,6 @@ def compute_metrics(pred: np.ndarray, target: np.ndarray) -> Dict[str, float]:
         metrics[f'{region}_sen'] = sen_val
         metrics[f'{region}_ppv'] = ppv_val
     
-    # 平均 Dice
     metrics['avg_dice'] = np.mean([metrics[f'{r}_dice'] for r in REGIONS])
     
     return metrics
@@ -310,7 +277,6 @@ def evaluate_single_code(
     output_dir: Path = None,
 ) -> Dict[str, List[float]]:
     """
-    对单个模态组合进行评估
     """
     model.eval()
     
@@ -325,7 +291,6 @@ def evaluate_single_code(
             masks = batch['mask'].numpy()
             indices = batch['idx']
             
-            # 前向传播
             if use_tta and tta_modes:
                 probs = apply_tta(model, images, tta_modes)
             else:
@@ -334,28 +299,20 @@ def evaluate_single_code(
                     logits = logits[0]
                 probs = torch.sigmoid(logits)
             
-            # 转换为 numpy
             probs_np = probs.cpu().numpy()
             
-            # 批量处理
             B = images.size(0)
             for b in range(B):
                 pred = (probs_np[b] > threshold).astype(np.float32)
                 target = masks[b]
                 
-                # 确保形状正确
                 if pred.shape[0] != 3:
                     logging.warning(f"Unexpected pred shape: {pred.shape}")
                     continue
                 if target.shape[0] != 3:
-                    # 可能需要转换 mask 格式
                     if target.ndim == 2:
-                        # 单通道 mask，需要转换为 3 通道 (WT/TC/ET)
-                        # 假设: 0=background, 1=WT, 2=TC, 3=ET
-                        # 这里需要根据实际数据格式调整
                         pass
                 
-                # 计算指标
                 metrics = compute_metrics(pred, target)
                 
                 for k, v in metrics.items():
@@ -366,7 +323,6 @@ def evaluate_single_code(
                     **metrics
                 })
                 
-                # 保存预测
                 if save_predictions and output_dir:
                     pred_path = output_dir / 'predictions' / f'{indices[b]}.npy'
                     pred_path.parent.mkdir(parents=True, exist_ok=True)
@@ -376,16 +332,13 @@ def evaluate_single_code(
 
 
 def evaluate(args):
-    """主评估函数"""
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     logging.info(f"Using device: {device}")
     
-    # 加载模型
     logging.info(f"Loading model from {args.model_path}")
     model = CPH(n_classes=3, in_channels=args.in_channels).to(device)
     
     state_dict = torch.load(args.model_path, map_location=device)
-    # 处理可能的 DDP wrapper
     if any(k.startswith('module.') for k in state_dict.keys()):
         state_dict = {k.replace('module.', ''): v for k, v in state_dict.items()}
     model.load_state_dict(state_dict, strict=False)
@@ -393,14 +346,11 @@ def evaluate(args):
     
     logging.info(f"Model loaded successfully")
     
-    # TTA 设置
     tta_modes = args.tta_modes.split(',') if args.use_TTA else []
     
-    # 输出目录
     output_dir = Path(args.output_dir) if args.output_dir else Path(args.model_path).parent
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # 确定要评估的模态组合
     if args.eval_all_codes:
         codes_to_eval = ALL_MODAL_CODES
         logging.info(f"Evaluating all {len(codes_to_eval)} modal codes")
@@ -408,7 +358,6 @@ def evaluate(args):
         code = [int(x) for x in args.modal_code.split(',')]
         codes_to_eval = [code]
     
-    # 存储所有结果
     all_results = []
     
     gc.disable()
@@ -421,7 +370,6 @@ def evaluate(args):
         logging.info(f"Present modalities: {present_mods}")
         logging.info(f"{'='*60}")
         
-        # 创建数据集
         dataset = EvalDataset(
             data_dir=args.data_path,
             list_name=args.test_list,
@@ -437,7 +385,6 @@ def evaluate(args):
             pin_memory=True,
         )
         
-        # 评估
         metrics, sample_results = evaluate_single_code(
             model=model,
             data_loader=dataloader,
@@ -449,7 +396,6 @@ def evaluate(args):
             output_dir=output_dir / f'code_{code_str}' if args.save_predictions else None,
         )
         
-        # 汇总结果
         result = {
             'modal_code': modal_code,
             'code_str': code_str,
@@ -466,7 +412,6 @@ def evaluate(args):
         
         all_results.append(result)
         
-        # 打印结果
         logging.info(f"\nResults for code {code_str}:")
         logging.info(f"  WT Dice: {result['WT_dice']:.4f} | Sen: {result['WT_sen']:.4f} | PPV: {result['WT_ppv']:.4f}")
         logging.info(f"  TC Dice: {result['TC_dice']:.4f} | Sen: {result['TC_sen']:.4f} | PPV: {result['TC_ppv']:.4f}")
@@ -475,32 +420,22 @@ def evaluate(args):
     
     gc.enable()
     
-    # 汇总所有结果
     logging.info(f"\n{'='*80}")
     logging.info("SUMMARY OF ALL MODAL CODES")
     logging.info(f"{'='*80}")
     
-    print("\n" + "-"*100)
-    print(f"{'Code':<15} {'Modalities':<20} {'WT Dice':<12} {'TC Dice':<12} {'ET Dice':<12} {'Avg Dice':<12}")
-    print("-"*100)
     
     for r in all_results:
         mods_str = '+'.join(r['present_mods']) if r['present_mods'] else 'none'
-        print(f"{r['code_str']:<15} {mods_str:<20} {r['WT_dice']:.4f}       {r['TC_dice']:.4f}       {r['ET_dice']:.4f}       {r['avg_dice']:.4f}")
     
-    print("-"*100)
     
-    # 计算平均
     if len(all_results) > 1:
         avg_wt = np.mean([r['WT_dice'] for r in all_results])
         avg_tc = np.mean([r['TC_dice'] for r in all_results])
         avg_et = np.mean([r['ET_dice'] for r in all_results])
         avg_all = np.mean([r['avg_dice'] for r in all_results])
         
-        print(f"{'MEAN':<15} {'all codes':<20} {avg_wt:.4f}       {avg_tc:.4f}       {avg_et:.4f}       {avg_all:.4f}")
-        print("-"*100)
     
-    # 保存结果到文件
     result_file = output_dir / 'eval_results.txt'
     with open(result_file, 'w') as f:
         f.write(f"Model: {args.model_path}\n")

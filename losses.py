@@ -90,7 +90,7 @@ def info_nce_i2p(inst_feat, proto_pos, proto_neg_list, tau=0.07):
         loss = -torch.log_softmax(logits_pos, dim=1).mean()
     else:
         logits = torch.cat([logits_pos, logits_neg], dim=1)   # [B, K + sumK]
-        labels = torch.zeros(q.size(0), dtype=torch.long, device=q.device) # 让第一个组为“正”
+        labels = torch.zeros(q.size(0), dtype=torch.long, device=q.device)
         loss = F.cross_entropy(logits, labels)
     return loss
 

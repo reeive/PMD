@@ -18,12 +18,10 @@ TEST_NAME: str   = "test_tumor.list"
 SKIP_EMPTY: bool = True               
 
 
-
 def is_mask_nonempty(npy_path: Path) -> bool:
     try:
         arr = np.load(npy_path, mmap_mode="r")
     except Exception as e:
-        print(f"[WARN] Failed to load {npy_path}: {e}")
         return False
 
 
@@ -99,14 +97,6 @@ def main():
     write_list(out_dir / f"{PREFIX}{TRAIN_NAME}", train)
     write_list(out_dir / f"{PREFIX}{VAL_NAME}",   val)
     write_list(out_dir / f"{PREFIX}{TEST_NAME}",  test)
-
-    print(f"[OK] scanned={total}  skipped_empty={skipped}  kept={len(names)}")
-    print(f"      train={len(train)}  val={len(val)}  test={len(test)}")
-    print(f"Saved to: {out_dir}")
-    print(f"Files:")
-    print(f"  {out_dir / (PREFIX + TRAIN_NAME)}")
-    print(f"  {out_dir / (PREFIX + VAL_NAME)}")
-    print(f"  {out_dir / (PREFIX + TEST_NAME)}")
 
 
 if __name__ == "__main__":

@@ -59,7 +59,6 @@ class TACLoss(nn.Module):
         return loss
 
 
-
 _EPS = 1e-6
 
 def _to_prob(x: torch.Tensor, act: str = "sigmoid") -> torch.Tensor:
@@ -82,19 +81,12 @@ def pairwise_tversky_sim(A: torch.Tensor, B: torch.Tensor,
     Pairwise Tversky similarity with optional drift-aware adaptation.
     
     When drift_aware=True:
-    - 使用 instance 与 prototype 的 cosine 相似度估计 drift 程度
-    - drift 程度越高（距离越远），α 越小、β 越大
-    - 效果：prototype 主导计算，减少 drifted instance 的 FP 惩罚
-    - 无额外超参数：直接使用相似度本身作为权重
     
     Args:
         A: instance features [N, D]
         B: prototype features [K, D]
-        alpha: FP 权重 (base)
-        beta: FN 权重 (base)
-        smooth: 数值稳定性
-        act: 激活函数
-        drift_aware: 是否启用 drift-aware 自适应
+        alpha: FP  (base)
+        beta: FN  (base)
     """
     A_ = _to_prob(A, act=act)  # [N,D]
     B_ = _to_prob(B, act=act)  # [K,D]
@@ -106,28 +98,15 @@ def pairwise_tversky_sim(A: torch.Tensor, B: torch.Tensor,
     FP = (A2 * (1.0 - B2)).sum(dim=-1)        # [N,K]
 
     if drift_aware:
-        # ===== Drift-aware α/β adaptation (无超参数) =====
-        # 计算 cosine 相似度作为 drift 指标
         A_norm = F.normalize(A, dim=-1, eps=_EPS)  # [N, D]
         B_norm = F.normalize(B, dim=-1, eps=_EPS)  # [K, D]
-        cos_sim = A_norm @ B_norm.t()              # [N, K]，范围 [-1, 1]
+        cos_sim = A_norm @ B_norm.t()
         
-        # 归一化到 [0, 1]，作为 "相似度因子"
-        # sim_factor=1 表示完全相似（无 drift），sim_factor=0 表示完全不相似（高 drift）
         sim_factor = (cos_sim + 1.0) / 2.0         # [N, K]
         
-        # Drift-aware 调整策略（无超参数）：
-        # - 当 sim_factor 高（无 drift）：使用原始 α, β
-        # - 当 sim_factor 低（高 drift）：
-        #   - α_eff 减小 → 减少 FP 惩罚（instance 独有的部分可能是 noise）
-        #   - β_eff 增大 → 增加 FN 惩罚（prototype 有的部分更可信）
-        # 效果：prototype 主导，drifted instance 贡献降低
         
-        # α_eff = α * sim_factor（drift 大时 α 减小）
         alpha_eff = alpha * sim_factor
         
-        # β_eff = β + (1 - β) * (1 - sim_factor)（drift 大时 β 增大，但不超过 1）
-        # 简化：β_eff = β * sim_factor + (1 - sim_factor) = 1 - sim_factor * (1 - β)
         beta_eff = 1.0 - sim_factor * (1.0 - beta)
         
         T = (TP + smooth) / (TP + beta_eff * FN + alpha_eff * FP + smooth)
@@ -151,7 +130,6 @@ def _mp_nce_from_logits(Lpos: torch.Tensor, Lneg: torch.Tensor = None) -> torch.
     Lneg: [N, Kn] or None
     """
     if Lneg is None or Lneg.numel() == 0:
-        # 没有负样本就没有“对比”信号；返回0更合理（而不是强行做softmax均匀化）
         return Lpos.new_tensor(0.0)
 
     logits = torch.cat([Lpos, Lneg], dim=1)                         # [N, Kp+Kn]
@@ -172,25 +150,17 @@ def tv_nce_i2p(inst_feat: torch.Tensor,
     """
     Instance-to-Prototype NCE loss with Tversky similarity.
     
-    当 drift_aware=True 时，对于 drifted instances (与 prototype 距离远的样本)，
-    Tversky 相似度计算会自动以 prototype 为主导，降低 drifted regions 的贡献，
-    防止 shifted features 主导优化。
+     drift_aware=True  drifted instances ( prototype )
     
     Args:
         inst_feat: instance features [B, D]
         proto_pos: positive prototypes [Kp, D]
         proto_neg_list: list of negative prototypes
-        alpha, beta: Tversky 参数
         tau: temperature
-        smooth: 数值稳定性
-        act: 激活函数
-        drift_aware: 是否启用 drift-aware 自适应（默认开启）
     """
-    # 正样本相似度：使用 drift_aware 模式
     S_pos = pairwise_tversky_sim(inst_feat, proto_pos, alpha, beta, smooth, act, 
                                   drift_aware=drift_aware)  # [B,Kp]
     
-    # 负样本相似度：同样使用 drift_aware 模式保持一致性
     S_negs = [pairwise_tversky_sim(inst_feat, n, alpha, beta, smooth, act,
                                     drift_aware=drift_aware)
               for n in proto_neg_list if n is not None]
@@ -213,8 +183,6 @@ def tv_nce_p2p(proto_a: torch.Tensor,
     """
     Prototype-to-Prototype NCE loss with Tversky similarity.
     
-    注意：P2P 对齐时 drift_aware 默认关闭，因为两边都是 prototype，
-    不存在 instance drift 的问题。
     """
     S_pos = pairwise_tversky_sim(proto_a, proto_pos, alpha, beta, smooth, act,
                                   drift_aware=drift_aware)    # [Ka,Kp]

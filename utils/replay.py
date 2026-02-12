@@ -44,7 +44,6 @@ def _save_replay(
 
 def _load_all_replay_buffers(prev_modalities: List[str], device: str = "cpu") -> Dict[str, dict]:
     """
-    加载所有前序模态的 replay buffer
     
     Returns:
         Dict[modality -> replay_data]
@@ -60,7 +59,6 @@ def _load_all_replay_buffers(prev_modalities: List[str], device: str = "cpu") ->
 
 class ReplayDataset(Dataset):
     """
-    Replay Buffer 数据集，支持从多个模态的 replay buffer 中加载数据
     """
     def __init__(
         self,
@@ -72,18 +70,16 @@ class ReplayDataset(Dataset):
         """
         Args:
             replay_dict: {modality: {images, masks, losses, patients, modalities}}
-            fused_dir: 4ch fused slice 目录 (用于加载完整4通道)
-            allowed_mask: [4] 允许的模态掩码
-            dtype: 数据类型
+            fused_dir: 4ch fused slice  (4)
+            allowed_mask: [4]
         """
         self.replay_dict = replay_dict
         self.fused_dir = Path(fused_dir) if fused_dir else None
         self.allowed = allowed_mask if allowed_mask is not None else torch.ones(4)
         self.dt = np.float16 if dtype == "float16" else np.float32
         
-        # 构建全局索引: (modality, local_idx)
         self.index_map: List[Tuple[str, int]] = []
-        self.mod_to_indices: Dict[str, List[int]] = {}  # 用于分层抽样
+        self.mod_to_indices: Dict[str, List[int]] = {}
         
         global_idx = 0
         for mod, data in replay_dict.items():
@@ -108,17 +104,14 @@ class ReplayDataset(Dataset):
         mod, local_idx = self.index_map[idx]
         data = self.replay_dict[mod]
         
-        # images: [N, 1, H, W] 或 [N, C, H, W]
-        img = data["images"][local_idx]  # [1, H, W] 或 [C, H, W]
+        img = data["images"][local_idx]
         mask = data["masks"][local_idx]  # [3, H, W]
         loss = data["losses"][local_idx] if "losses" in data else 0.0
         patient = data["patients"][local_idx] if "patients" in data else "unk"
         
-        # 转换为 float32
         img = img.float()
         mask = mask.float()
         
-        # 如果是单通道，扩展到4通道 (在对应模态位置)
         if img.dim() == 3 and img.shape[0] == 1:
             H, W = img.shape[1], img.shape[2]
             img4 = torch.zeros(4, H, W, dtype=torch.float32)
@@ -126,9 +119,8 @@ class ReplayDataset(Dataset):
             img4[mod_idx] = img[0]
             img = img4
         elif img.dim() == 3 and img.shape[0] == 4:
-            pass  # 已经是4通道
+            pass
         else:
-            # 尝试处理其他情况
             if img.dim() == 2:
                 H, W = img.shape
                 img4 = torch.zeros(4, H, W, dtype=torch.float32)
@@ -136,7 +128,6 @@ class ReplayDataset(Dataset):
                 img4[mod_idx] = img
                 img = img4
         
-        # 应用 allowed mask
         present = torch.zeros(4, dtype=torch.float32)
         mod_idx = MODS.index(mod) if mod in MODS else 0
         present[mod_idx] = 1.0
@@ -155,17 +146,14 @@ class ReplayDataset(Dataset):
         }
     
     def get_modality_indices(self, modality: str) -> List[int]:
-        """获取指定模态的所有全局索引"""
         return self.mod_to_indices.get(modality, [])
     
     def get_all_modalities(self) -> List[str]:
-        """获取所有模态列表"""
         return list(self.mod_to_indices.keys())
 
 
 class StratifiedReplaySampler(Sampler):
     """
-    分层抽样采样器：按模态均衡采样 replay 数据
     """
     def __init__(
         self,
@@ -186,11 +174,9 @@ class StratifiedReplaySampler(Sampler):
     
     def __iter__(self):
         if not self.stratify_by_mod:
-            # 简单随机采样
             indices = self.rng.choice(len(self.dataset), size=self.samples_per_epoch, replace=True)
             return iter(indices.tolist())
         
-        # 分层采样：每个模态平均分配
         mods = self.dataset.get_all_modalities()
         if len(mods) == 0:
             return iter([])
@@ -202,17 +188,14 @@ class StratifiedReplaySampler(Sampler):
             mod_indices = self.dataset.get_modality_indices(mod)
             if len(mod_indices) == 0:
                 continue
-            # 有放回采样
             sampled = self.rng.choice(mod_indices, size=samples_per_mod, replace=True)
             indices.extend(sampled.tolist())
         
-        # 如果不够，从所有数据中补充
         if len(indices) < self.samples_per_epoch:
             all_indices = list(range(len(self.dataset)))
             extra = self.rng.choice(all_indices, size=self.samples_per_epoch - len(indices), replace=True)
             indices.extend(extra.tolist())
         
-        # 打乱
         self.rng.shuffle(indices)
         return iter(indices[:self.samples_per_epoch])
     
@@ -222,11 +205,8 @@ class StratifiedReplaySampler(Sampler):
 
 class MixedBatchSampler:
     """
-    混合批次生成器：从当前数据和 replay 数据中按比例生成混合批次
     
-    每个批次包含:
-    - current_ratio 比例的当前阶段数据
-    - (1 - current_ratio) 比例的 replay 数据 (分层抽样)
+    - (1 - current_ratio)  replay  ()
     """
     def __init__(
         self,
@@ -243,7 +223,6 @@ class MixedBatchSampler:
         self.rng = np.random.default_rng(seed)
         self.epoch = 0
         
-        # 计算每个 batch 中各部分的数量
         self.current_per_batch = max(1, int(batch_size * current_ratio))
         self.replay_per_batch = batch_size - self.current_per_batch
         
@@ -256,7 +235,6 @@ class MixedBatchSampler:
         self.rng = np.random.default_rng(self.epoch + 42)
     
     def sample_replay_batch(self, size: int) -> List[int]:
-        """分层抽样 replay 数据"""
         if self.replay_ds is None or len(self.replay_ds) == 0 or size == 0:
             return []
         
@@ -264,7 +242,6 @@ class MixedBatchSampler:
         if len(mods) == 0:
             return []
         
-        # 分层抽样
         per_mod = max(1, size // len(mods))
         indices = []
         for mod in mods:
@@ -274,7 +251,6 @@ class MixedBatchSampler:
             sampled = self.rng.choice(mod_indices, size=min(per_mod, len(mod_indices)), replace=True)
             indices.extend(sampled.tolist())
         
-        # 补充或截断
         if len(indices) < size:
             all_idx = list(range(len(self.replay_ds)))
             extra = self.rng.choice(all_idx, size=size - len(indices), replace=True)
@@ -284,9 +260,8 @@ class MixedBatchSampler:
         return indices[:size]
     
     def sample_current_batch(self, size: int) -> List[int]:
-        """随机采样当前数据"""
         return self.rng.choice(self.current_size, size=size, replace=False).tolist()
     
     def get_batch_config(self) -> Tuple[int, int]:
-        """返回 (current_per_batch, replay_per_batch)"""
+        """ (current_per_batch, replay_per_batch)"""
         return self.current_per_batch, self.replay_per_batch
