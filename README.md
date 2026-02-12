@@ -31,9 +31,6 @@ pip install numpy scipy scikit-learn tqdm
 
 ```
 data/
-├── BraTS_fusedslice/        # Fused 4-channel slices
-│   ├── patient001_slice080.npy
-│   └── ...
 ├── masks_all/               # Segmentation masks
 │   ├── patient001_slice080.npy
 │   └── ...
