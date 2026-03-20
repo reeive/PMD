@@ -1,4 +1,4 @@
-# PMD: From Semantic Drift to Objective Miscalibration: Domain Incremental Brain Tumor Segmentation with Missing Modality
+# PMD: Domain Incremental Brain Tumor Segmentation with Missing Modality
 
 ## Overview
 
